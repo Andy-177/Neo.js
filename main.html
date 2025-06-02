@@ -391,6 +391,13 @@
             const command = commandInput.value.trim();
             if (!command) return;
 
+            if (command === 'clear') {
+                consoleOutput.innerHTML = ''; // 清空控制台输出区域
+                commandInput.value = ''; // 清空输入框
+                commandInput.focus(); // 重新聚焦到输入框
+                return;
+            }
+
             // Display the command in the console
             consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(command, { language: 'javascript' }).value}</code></p>`;
 
