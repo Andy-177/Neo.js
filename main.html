@@ -27,17 +27,8 @@
             border-radius: 8px;
             overflow: hidden;
         }
-        #editor {
-            height: 300px; /* Increased height for more code */
-            border-bottom: 1px solid #333;
-            padding: 10px;
-            overflow: auto;
-            background-color: #000;
-            color: #fff;
-            font-size: 14px; /* Slightly larger font size for better readability */
-        }
         #console {
-            height: 150px;
+            height: 300px;
             border-bottom: 1px solid #333;
             padding: 10px;
             overflow: auto;
@@ -126,14 +117,20 @@
         #fileList li button {
             margin-left: 10px;
         }
+        #newFileContent {
+            height: 300px;
+            width: 100%;
+            padding: 10px;
+            background-color: #111;
+            color: #fff;
+            border: 1px solid #333;
+            font-size: 14px;
+            resize: none;
+        }
     </style>
 </head>
 <body>
     <div id="container">
-        <div>
-            <div class="label">Script Input Area</div>
-            <div id="editor" contenteditable="true" style="padding: 10px;"></div>
-        </div>
         <div>
             <div class="label">Console Output Area</div>
             <div id="console" style="padding: 10px;"></div>
@@ -143,7 +140,6 @@
             <button onclick="executeCommand()">Run</button>
         </div>
         <div style="padding: 10px;">
-            <button onclick="executeEditorScript()">Run Script</button>
             <button id="autoScrollToggle" onclick="toggleAutoScroll()">Disable Auto Scroll</button>
             <button id="openFileManager" onclick="openFileManager()">File Manager</button>
         </div>
@@ -156,7 +152,6 @@
             <h2>File Manager</h2>
             <div id="fileList"></div>
             <button onclick="openCreateFileModal()">Create New File</button>
-            <button onclick="openCreateFolderModal()">Create New Folder</button>
             <div id="createFileModal" class="modal">
                 <div class="modal-content">
                     <span class="close" onclick="closeCreateFileModal()">&times;</span>
@@ -166,26 +161,16 @@
                     <button onclick="createFile()">Save</button>
                 </div>
             </div>
-            <div id="createFolderModal" class="modal">
-                <div class="modal-content">
-                    <span class="close" onclick="closeCreateFolderModal()">&times;</span>
-                    <h3>Create New Folder</h3>
-                    <input type="text" id="newFolderName" placeholder="Folder Name">
-                    <button onclick="createFolder()">Save</button>
-                </div>
-            </div>
         </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     <script>
-        const editor = document.getElementById('editor');
         const consoleOutput = document.getElementById('console');
         const commandInput = document.getElementById('commandInput');
         const autoScrollToggle = document.getElementById('autoScrollToggle');
         const fileManagerModal = document.getElementById('fileManagerModal');
         const createFileModal = document.getElementById('createFileModal');
-        const createFolderModal = document.getElementById('createFolderModal');
         let autoScrollEnabled = true;
 
         // Initialize highlight.js
@@ -406,6 +391,9 @@
             const command = commandInput.value.trim();
             if (!command) return;
 
+            // Display the command in the console
+            consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(command, { language: 'javascript' }).value}</code></p>`;
+
             const [cmd, ...args] = command.split(' ');
             switch (cmd) {
                 case 'jpm':
@@ -431,7 +419,8 @@
                     }
                     const files = JSON.parse(localStorage.getItem('files') || '{}');
                     if (files[fileName]) {
-                        editor.textContent = files[fileName];
+                        console.log(`File ${fileName} content:`);
+                        console.log(files[fileName]);
                     } else {
                         console.error(`File ${fileName} does not exist.`);
                     }
@@ -442,22 +431,32 @@
                         console.error("Usage: save <file-name>");
                         return;
                     }
-                    const fileContent = editor.textContent.trim();
+                    const fileContent = getFilePathContent(files, saveFileName);
+                    if (fileContent === null) {
+                        console.error(`File ${saveFileName} does not exist.`);
+                        return;
+                    }
                     const saveFiles = JSON.parse(localStorage.getItem('files') || '{}');
                     saveFiles[saveFileName] = fileContent;
                     localStorage.setItem('files', JSON.stringify(saveFiles));
                     console.log(`File ${saveFileName} saved successfully.`);
                     loadFiles();
                     break;
+                case 'run':
+                    const runFilePath = args.join(' ');
+                    if (!runFilePath) {
+                        console.error("Usage: run <file-path>");
+                        return;
+                    }
+                    runFile(runFilePath);
+                    break;
                 default:
                     try {
                         const result = eval(command);
                         if (result !== undefined) {
-                            consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(command, { language: 'javascript' }).value}</code></p>`;
                             consoleOutput.innerHTML += `<p>${result}</p>`;
                         }
                     } catch (error) {
-                        consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(command, { language: 'javascript' }).value}</code></p>`;
                         consoleOutput.innerHTML += `<p class="error"><strong>Error:</strong> ${error.message}</p>`;
                     }
             }
@@ -467,23 +466,27 @@
             hljs.highlightAll();
         }
 
-        function executeEditorScript() {
-            const scriptContent = editor.textContent.trim();
-            if (!scriptContent) {
-                console.error("No script to execute.");
+        function runFile(filePath) {
+            const files = JSON.parse(localStorage.getItem('files') || '{}');
+            const fileContent = getFilePathContent(files, filePath);
+
+            if (fileContent === null) {
+                console.error(`File ${filePath} does not exist.`);
                 return;
             }
 
             try {
-                const result = eval(scriptContent);
+                const result = eval(fileContent);
                 if (result !== undefined) {
-                    consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(scriptContent, { language: 'javascript' }).value}</code></p>`;
                     consoleOutput.innerHTML += `<p>${result}</p>`;
                 }
             } catch (error) {
-                consoleOutput.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(scriptContent, { language: 'javascript' }).value}</code></p>`;
                 consoleOutput.innerHTML += `<p class="error"><strong>Error:</strong> ${error.message}</p>`;
             }
+        }
+
+        function getFilePathContent(files, filePath) {
+            return files[filePath] || null;
         }
 
         function toggleAutoScroll() {
@@ -507,14 +510,6 @@
 
         function closeCreateFileModal() {
             createFileModal.style.display = 'none';
-        }
-
-        function openCreateFolderModal() {
-            createFolderModal.style.display = 'block';
-        }
-
-        function closeCreateFolderModal() {
-            createFolderModal.style.display = 'none';
         }
 
         function loadFiles() {
@@ -559,19 +554,13 @@
             const files = JSON.parse(localStorage.getItem('files') || '{}');
             delete files[fileName];
             localStorage.setItem('files', JSON.stringify(files));
-            loadFiles();
-        }
-
-        function createFolder() {
-            const folderName = document.getElementById('newFolderName').value;
-            if (!folderName) {
-                alert('Folder name is required.');
-                return;
+            // 同步删除包管理器中的包
+            if (packages.used[fileName]) {
+                delete packages.used[fileName];
             }
-            const files = JSON.parse(localStorage.getItem('files') || '{}');
-            files[folderName] = {};
-            localStorage.setItem('files', JSON.stringify(files));
-            closeCreateFolderModal();
+            if (packages.unused[fileName]) {
+                delete packages.unused[fileName];
+            }
             loadFiles();
         }
 
