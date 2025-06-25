@@ -1,1 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JavaScript Console</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/default.min.css">
+    <style>
+        body {
+            font-family: "Courier New", Courier, monospace;
+            background-color: #000;
+            color: #00ff00;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .terminal {
+            flex: 1;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: auto;
+        }
+        .output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .input {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            background-color: #111;
+            border-top: 1px solid #333;
+        }
+        input[type="text"] {
+            background: transparent;
+            border: none;
+            color: #00ff00;
+            outline: none;
+            width: calc(100% - 40px);
+            font-family: "Courier New", Courier, monospace;
+        }
+        .error {
+            color: #ff4d4d;
+        }
+        .warn {
+            color: #ffcc00;
+        }
+        .log {
+            color: #00ff00;
+        }
+        /* Override highlight.js styles to match terminal background */
+        .hljs {
+            background: #000; /* Match terminal background color */
+            color: #00ff00; /* Match terminal text color */
+            padding: 0; /* Remove padding */
+            border: none; /* Remove border */
+        }
+        .hljs-keyword, .hljs-literal, .hljs-symbol, .hljs-name {
+            color: #00ff80; /* Lighter green for keywords */
+        }
+        .hljs-string, .hljs-number, .hljs-regexp {
+            color: #00ffff; /* Cyan for strings and numbers */
+        }
+        .hljs-comment {
+            color: #808080; /* Gray for comments */
+        }
+        .hljs-attr {
+            color: #00ff00; /* Green for attributes */
+        }
+        .hljs-tag, .hljs-class, .hljs-title {
+            color: #ff8000; /* Orange for tags and classes */
+        }
+    </style>
+</head>
+<body>
+    <div class="terminal">
+        <div class="output" id="output"></div>
+        <div class="input">
+            <input type="text" id="commandInput" placeholder="Enter command..." autocomplete="off">
+        </div>
+    </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+    <script>
+        const outputDiv = document.getElementById('output');
+        const commandInput = document.getElementById('commandInput');
+
+        // Redirect console methods to our console output
+        const originalConsoleLog = console.log;
+        const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+
+        console.log = function(...args) {
+            const output = args.join(' ');
+            outputDiv.innerHTML += `<p class="log">${output}</p>`;
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+            originalConsoleLog(...args); // Optionally log to the original console
+        };
+
+        console.error = function(...args) {
+            const output = args.join(' ');
+            outputDiv.innerHTML += `<p class="error">${output}</p>`;
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+            originalConsoleError(...args); // Optionally log to the original console
+        };
+
+        console.warn = function(...args) {
+            const output = args.join(' ');
+            outputDiv.innerHTML += `<p class="warn">${output}</p>`;
+            outputDiv.scrollTop = outputDiv.scrollHeight;
+            originalConsoleWarn(...args); // Optionally log to the original console
+        };
+
+        commandInput.focus();
+
+        commandInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                const command = commandInput.value.trim();
+                if (command) {
+                    executeCommand(command);
+                }
+                commandInput.value = '';
+            }
+        });
+
+        // Global object to store project files and libraries
+        let projectFiles = {};
+        let downloadedLibraries = {};
+        let projectName = '';
+        let downloadingLibraries = [];
+        let downloadAbortController = null;
+        let addedGlobalCommands = [];
+        let originalExecuteCommand = null;
+
+        async function loadProject() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.zip';
+            input.onchange = async function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    try {
+                        const zip = await JSZip.loadAsync(file);
+                        const files = Object.keys(zip.files);
+                        if (files.some(file => zip.files[file].dir)) {
+                            throw new Error("ZIP文件中不能包含文件夹");
+                        }
+                        for (const file of files) {
+                            projectFiles[file] = await zip.file(file).async('string');
+                        }
+                        projectName = file.name.split('.')[0];
+                        console.log("项目加载成功");
+                        if (projectFiles['lib.cfg']) {
+                            const libs = projectFiles['lib.cfg'].split('\n').map(lib => lib.trim()).filter(lib => lib);
+                            await loadLibraries(libs);
+                        }
+                    } catch (error) {
+                        console.error(`加载项目失败: ${error.message}`);
+                    }
+                }
+            };
+            input.click();
+        }
+
+        async function loadLibraries(libs) {
+            downloadingLibraries = libs.map(lib => ({
+                url: lib,
+                status: 'pending'
+            }));
+            for (const lib of libs) {
+                try {
+                    const controller = new AbortController();
+                    downloadAbortController = controller;
+                    const response = await fetch(lib, { signal: controller.signal });
+                    if (!response.ok) {
+                        throw new Error(`Failed to load library: ${lib}`);
+                    }
+                    const text = await response.text();
+                    downloadedLibraries[lib] = text;
+                    console.log(`库 ${lib} 下载成功`);
+                    const index = downloadingLibraries.findIndex(d => d.url === lib);
+                    if (index !== -1) {
+                        downloadingLibraries[index].status = 'completed';
+                    }
+                } catch (error) {
+                    console.error(`库 ${lib} 下载失败: ${error.message}`);
+                    const index = downloadingLibraries.findIndex(d => d.url === lib);
+                    if (index !== -1) {
+                        downloadingLibraries[index].status = 'failed';
+                    }
+                }
+            }
+        }
+
+        function listFiles() {
+            if (Object.keys(projectFiles).length === 0) {
+                console.log("当前没有加载任何项目");
+            } else {
+                console.log("当前项目中的文件:");
+                for (const file in projectFiles) {
+                    console.log(file);
+                }
+            }
+        }
+
+        function runJSFile(fileName) {
+            if (!fileName.endsWith('.js')) {
+                console.error("文件名必须以.js结尾");
+                return;
+            }
+            if (!projectFiles[fileName]) {
+                console.error(`文件 ${fileName} 不存在`);
+                return;
+            }
+            try {
+                const script = projectFiles[fileName];
+                const scriptFunction = new Function(script);
+                scriptFunction();
+                console.log(`文件 ${fileName} 运行成功`);
+            } catch (error) {
+                console.error(`运行文件 ${fileName} 失败: ${error.message}`);
+            }
+        }
+
+        function unloadProject() {
+            projectFiles = {};
+            downloadedLibraries = {};
+            projectName = '';
+            downloadingLibraries = [];
+            downloadAbortController = null;
+
+            // 删除添加的全局命令
+            for (const cmd of addedGlobalCommands) {
+                delete window[cmd];
+            }
+            addedGlobalCommands = [];
+
+            // 恢复原始的 executeCommand 函数
+            if (originalExecuteCommand) {
+                window.executeCommand = originalExecuteCommand;
+            }
+
+            console.log("项目已卸载");
+        }
+
+        async function exportLibraries() {
+            if (Object.keys(projectFiles).length === 0) {
+                console.error("当前没有加载任何项目");
+                return;
+            }
+
+            if (!projectFiles['lib.cfg']) {
+                console.error("项目中没有找到 lib.cfg 文件");
+                return;
+            }
+
+            const zip = new JSZip();
+            for (const lib in downloadedLibraries) {
+                const libName = lib.split('/').pop();
+                zip.file(libName, downloadedLibraries[lib]);
+            }
+
+            const outputFileName = `${projectName}-lib.zip`;
+            const content = await zip.generateAsync({ type: "blob" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(content);
+            a.download = outputFileName;
+            a.click();
+            console.log(`库已导出为 ${outputFileName}`);
+        }
+
+        async function redownLibraries() {
+            if (Object.keys(projectFiles).length === 0) {
+                console.error("当前没有加载任何项目");
+                return;
+            }
+
+            if (!projectFiles['lib.cfg']) {
+                console.error("项目中没有找到 lib.cfg 文件");
+                return;
+            }
+
+            const libs = projectFiles['lib.cfg'].split('\n').map(lib => lib.trim()).filter(lib => lib);
+            downloadedLibraries = {};
+            await loadLibraries(libs);
+            console.log("库重新下载完成");
+        }
+
+        function listDownloadingFiles() {
+            if (downloadingLibraries.length === 0) {
+                console.log("当前没有正在下载的文件");
+            } else {
+                console.log("正在下载的文件:");
+                for (const lib of downloadingLibraries) {
+                    console.log(`${lib.url} - 状态: ${lib.status}`);
+                }
+            }
+        }
+
+        function stopDownloadingFiles() {
+            if (downloadAbortController) {
+                downloadAbortController.abort();
+                console.log("所有文件的下载已终止");
+                downloadingLibraries = [];
+                downloadAbortController = null;
+            } else {
+                console.log("当前没有正在进行的下载");
+            }
+        }
+
+        function clearScreen() {
+            outputDiv.innerHTML = '';
+            console.log("屏幕已清除");
+        }
+
+        async function runFile() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.js';
+            input.onchange = async function(event) {
+                const file = event.target.files[0];
+                if (file) {
+                    try {
+                        const text = await file.text();
+                        const scriptFunction = new Function(text);
+                        scriptFunction();
+                        console.log(`文件 ${file.name} 运行成功`);
+                    } catch (error) {
+                        console.error(`运行文件 ${file.name} 失败: ${error.message}`);
+                    }
+                }
+            };
+            input.click();
+        }
+
+        function executeCommand(command) {
+            outputDiv.innerHTML += `<p>&gt; <code class="hljs">${hljs.highlight(command, { language: 'javascript' }).value}</code></p>`;
+            const [cmd, ...args] = command.split(' ');
+
+            // 检查是否是自定义命令
+            switch (cmd.toLowerCase()) {
+                case 'load':
+                    loadProject();
+                    break;
+                case 'list':
+                    listFiles();
+                    break;
+                case 'js':
+                    if (args.length === 1) {
+                        runJSFile(args[0]);
+                    } else {
+                        console.error("使用方法: js <filename>");
+                    }
+                    break;
+                case 'unload':
+                    unloadProject();
+                    break;
+                case 'lib':
+                    exportLibraries();
+                    break;
+                case 'redown':
+                    redownLibraries();
+                    break;
+                case 'dlist':
+                    listDownloadingFiles();
+                    break;
+                case 'dstop':
+                    stopDownloadingFiles();
+                    break;
+                case 'clear':
+                    clearScreen();
+                    break;
+                case 'run':
+                    runFile();
+                    break;
+                default:
+                    // 尝试作为 JavaScript 表达式执行
+                    try {
+                        const result = eval(command);
+                        if (result !== undefined) {
+                            console.log(result);
+                        }
+                    } catch (error) {
+                        console.error(`执行命令失败: ${error.message}`);
+                    }
+            }
+        }
+
+        // Save initial commands
+        const initialCommands = {
+            loadProject,
+            loadLibraries,
+            listFiles,
+            runJSFile,
+            unloadProject,
+            exportLibraries,
+            redownLibraries,
+            listDownloadingFiles,
+            stopDownloadingFiles,
+            clearScreen,
+            executeCommand
+        };
+
+        // Save the original executeCommand function
+        originalExecuteCommand = window.executeCommand;
+    </script>
+</body>
+</html>
